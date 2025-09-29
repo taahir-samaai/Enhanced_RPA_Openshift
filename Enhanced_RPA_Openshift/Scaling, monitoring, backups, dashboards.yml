@@ -1,0 +1,1421 @@
+# Scaling, monitoring, backups, dashboards
+
+---
+# Horizontal Pod Autoscaler for Orchestrator
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rpa-orchestrator-hpa
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rpa-orchestrator
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 2
+          periodSeconds: 30
+      selectPolicy: Max
+
+---
+# Horizontal Pod Autoscaler for Workers
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rpa-worker-hpa
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rpa-worker
+  minReplicas: 4
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+
+---
+# Pod Disruption Budget for Orchestrator
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rpa-orchestrator-pdb
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rpa-orchestrator
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+---
+# Pod Disruption Budget for Workers
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rpa-worker-pdb
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rpa-worker
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+---
+# Pod Disruption Budget for Valkey
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: valkey-pdb
+  namespace: rpa-system
+  labels:
+    app: valkey
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: valkey
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+---
+# Pod Disruption Budget for Valkey Sentinel
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: valkey-sentinel-pdb
+  namespace: rpa-system
+  labels:
+    app: valkey-sentinel
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: valkey-sentinel
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+---
+# ServiceMonitor for Orchestrator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rpa-orchestrator-monitor
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rpa-orchestrator
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      scheme: http
+
+---
+# ServiceMonitor for Workers
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rpa-worker-monitor
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rpa-worker
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      scheme: http
+
+---
+# ServiceMonitor for Browser Services
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rpa-browser-monitor
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: rpa-browser
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      scheme: http
+
+---
+# ServiceMonitor for Valkey
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: valkey-monitor
+  namespace: rpa-system
+  labels:
+    app: valkey
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: valkey
+  endpoints:
+    - port: valkey
+      interval: 30s
+      path: /metrics
+      scheme: http
+
+---
+# PrometheusRule for RPA System Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: rpa-system-alerts
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    monitoring: prometheus
+spec:
+  groups:
+    - name: rpa-orchestrator-alerts
+      interval: 30s
+      rules:
+        - alert: OrchestratorDown
+          expr: up{job="rpa-orchestrator-service"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "RPA Orchestrator is down"
+            description: "Orchestrator has been down for more than 2 minutes"
+        
+        - alert: OrchestratorHighMemory
+          expr: container_memory_usage_bytes{pod=~"rpa-orchestrator-.*"} / container_spec_memory_limit_bytes{pod=~"rpa-orchestrator-.*"} > 0.9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Orchestrator high memory usage"
+            description: "Orchestrator memory usage is above 90%"
+    
+    - name: rpa-worker-alerts
+      interval: 30s
+      rules:
+        - alert: WorkerPodCrashLooping
+          expr: rate(kube_pod_container_status_restarts_total{namespace="rpa-system",pod=~"rpa-worker-.*"}[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker pod is crash looping"
+            description: "Worker pod {{ $labels.pod }} is restarting frequently"
+        
+        - alert: InsufficientWorkers
+          expr: count(up{job="rpa-worker-service"} == 1) < 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Insufficient worker pods available"
+            description: "Less than 2 worker pods are running"
+    
+    - name: rpa-browser-alerts
+      interval: 30s
+      rules:
+        - alert: BrowserServiceHighCPU
+          expr: rate(container_cpu_usage_seconds_total{pod=~"rpa-browser-.*"}[5m]) > 1.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Browser service high CPU usage"
+            description: "Browser service {{ $labels.pod }} CPU usage is above 90%"
+        
+        - alert: BrowserServiceStartupFailure
+          expr: increase(kube_pod_container_status_restarts_total{namespace="rpa-system",pod=~"rpa-browser-.*"}[10m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Browser service failing to start"
+            description: "Browser service {{ $labels.pod }} has restarted more than 3 times in 10 minutes"
+    
+    - name: valkey-alerts
+      interval: 30s
+      rules:
+        - alert: ValkeyDown
+          expr: up{job="valkey-service"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Valkey is down"
+            description: "Valkey has been down for more than 2 minutes"
+        
+        - alert: ValkeyHighMemory
+          expr: container_memory_usage_bytes{pod=~"valkey-.*"} / container_spec_memory_limit_bytes{pod=~"valkey-.*"} > 0.9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Valkey high memory usage"
+            description: "Valkey memory usage is above 90%"
+        
+        - alert: ValkeyReplicationBroken
+          expr: count(up{job="valkey-service"} == 1) < 2
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Valkey replication compromised"
+            description: "Less than 2 Valkey replicas are available"
+
+---
+# Namespace Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rpa-system-quota
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+spec:
+  hard:
+    # Compute Resources
+    requests.cpu: "40"
+    requests.memory: "80Gi"
+    limits.cpu: "60"
+    limits.memory: "120Gi"
+    
+    # Storage
+    requests.storage: "200Gi"
+    persistentvolumeclaims: "10"
+    
+    # Object Counts
+    pods: "100"
+    services: "20"
+    secrets: "30"
+    configmaps: "20"
+    replicationcontrollers: "0"
+    
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: [""]
+
+---
+# Limit Range for Default Resource Constraints
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: rpa-system-limits
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+spec:
+  limits:
+    # Default Pod Limits
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+    
+    # Default Container Limits
+    - type: Container
+      max:
+        cpu: "4"
+        memory: "8Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "250m"
+        memory: "256Mi"
+      maxLimitRequestRatio:
+        cpu: "4"
+        memory: "4"
+    
+    # PVC Limits
+    - type: PersistentVolumeClaim
+      max:
+        storage: "100Gi"
+      min:
+        storage: "1Gi"
+
+---
+# Route for Orchestrator API (Internal/Admin Access Only)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rpa-orchestrator-route
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+  annotations:
+    haproxy.router.openshift.io/timeout: "300s"
+    haproxy.router.openshift.io/rate-limit-connections: "true"
+    haproxy.router.openshift.io/rate-limit-connections.concurrent-tcp: "10"
+spec:
+  to:
+    kind: Service
+    name: rpa-orchestrator-service
+    weight: 100
+  port:
+    targetPort: api
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+# Route for Orchestrator Metrics (Prometheus Scraping)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rpa-orchestrator-metrics-route
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    purpose: metrics
+  annotations:
+    haproxy.router.openshift.io/timeout: "30s"
+spec:
+  to:
+    kind: Service
+    name: rpa-orchestrator-service
+    weight: 100
+  port:
+    targetPort: metrics
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+# High Priority Class for Critical Components
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rpa-critical-priority
+  labels:
+    app: rpa-system
+value: 1000000
+globalDefault: false
+description: "Priority class for critical RPA components (Orchestrator, Valkey)"
+
+---
+# Normal Priority Class for Workers
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rpa-worker-priority
+  labels:
+    app: rpa-system
+value: 100000
+globalDefault: false
+description: "Priority class for RPA worker components"
+
+---
+# Low Priority Class for Browser Services (Ephemeral)
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: rpa-browser-priority
+  labels:
+    app: rpa-system
+value: 10000
+globalDefault: false
+description: "Priority class for ephemeral browser services"
+preemptionPolicy: PreemptLowerPriority
+
+---
+# Valkey Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: valkey-backup
+  namespace: rpa-system
+  labels:
+    app: valkey
+    purpose: backup
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: valkey-backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: rpa-orchestrator-sa
+          containers:
+            - name: backup
+              image: valkey/valkey:7.2
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting Valkey backup..."
+                  
+                  # Create backup directory
+                  BACKUP_DIR="/backup/valkey-$(date +%Y%m%d-%H%M%S)"
+                  mkdir -p $BACKUP_DIR
+                  
+                  # Backup each Valkey node
+                  for i in 0 1 2; do
+                    echo "Backing up valkey-${i}..."
+                    valkey-cli -h valkey-${i}.valkey-headless.rpa-system.svc.cluster.local \
+                      -a ${VALKEY_PASSWORD} \
+                      --rdb /tmp/valkey-${i}.rdb \
+                      BGSAVE
+                    
+                    # Wait for backup to complete
+                    sleep 5
+                    
+                    # Copy RDB file
+                    kubectl cp rpa-system/valkey-${i}:/data/dump.rdb \
+                      ${BACKUP_DIR}/valkey-${i}.rdb
+                  done
+                  
+                  # Create metadata file
+                  cat > ${BACKUP_DIR}/metadata.json <<EOF
+                  {
+                    "backup_date": "$(date -Iseconds)",
+                    "valkey_version": "7.2",
+                    "nodes_backed_up": 3,
+                    "backup_type": "full"
+                  }
+                  EOF
+                  
+                  echo "Backup complete: ${BACKUP_DIR}"
+                  
+                  # Cleanup old backups (keep last 30 days)
+                  find /backup -type d -name "valkey-*" -mtime +30 -exec rm -rf {} \;
+              env:
+                - name: VALKEY_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: valkey-credentials
+                      key: password
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backup
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-storage
+
+---
+# Evidence Cleanup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: evidence-cleanup
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: maintenance
+spec:
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: evidence-cleanup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting evidence cleanup..."
+                  
+                  # Get retention days from config
+                  RETENTION_DAYS=${SCREENSHOT_RETENTION_DAYS:-30}
+                  
+                  echo "Deleting evidence older than ${RETENTION_DAYS} days..."
+                  
+                  # Find and delete old evidence files
+                  find /var/evidence -type f -mtime +${RETENTION_DAYS} -delete
+                  
+                  # Clean up empty directories
+                  find /var/evidence -type d -empty -delete
+                  
+                  # Report disk usage
+                  echo "Current evidence storage usage:"
+                  du -sh /var/evidence
+                  
+                  echo "Evidence cleanup complete"
+              env:
+                - name: SCREENSHOT_RETENTION_DAYS
+                  valueFrom:
+                    configMapKeyRef:
+                      name: rpa-system-config
+                      key: screenshot-retention-days
+              volumeMounts:
+                - name: evidence-storage
+                  mountPath: /var/evidence
+          volumes:
+            - name: evidence-storage
+              persistentVolumeClaim:
+                claimName: evidence-storage
+
+---
+# Log Rotation CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: log-rotation
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: maintenance
+spec:
+  schedule: "0 4 * * 0"  # Weekly on Sunday at 4 AM
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: log-rotation
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: rotate
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "Starting log rotation..."
+                  
+                  # Archive logs older than 7 days
+                  find /var/log/rpa -name "*.log" -mtime +7 -exec gzip {} \;
+                  
+                  # Delete archived logs older than 30 days
+                  find /var/log/rpa -name "*.log.gz" -mtime +30 -delete
+                  
+                  # Report disk usage
+                  echo "Current log storage usage:"
+                  du -sh /var/log/rpa
+                  
+                  echo "Log rotation complete"
+              volumeMounts:
+                - name: log-storage
+                  mountPath: /var/log/rpa
+          volumes:
+            - name: log-storage
+              persistentVolumeClaim:
+                claimName: log-storage
+
+---
+# PVC for Backup Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 30Gi
+  storageClassName: standard
+
+---
+# Database Schema Initialization Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-init
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: initialization
+  annotations:
+    description: "Initialize database schema and tables for RPA system"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400  # Keep for 24 hours
+  template:
+    metadata:
+      labels:
+        app: database-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: rpa-orchestrator:v2.0-enhanced
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting database initialization..."
+              
+              # Run database migrations/initialization scripts
+              # This is a placeholder - replace with actual init logic
+              python -c "
+              from orchestrator.database import init_database
+              init_database()
+              print('Database initialization complete')
+              "
+              
+              echo "Database schema ready"
+          env:
+            - name: DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: connection-string
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: database-credentials
+                  key: password
+
+---
+# Valkey Initialization Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: valkey-init
+  namespace: rpa-system
+  labels:
+    app: valkey
+    purpose: initialization
+  annotations:
+    description: "Initialize Valkey with required keys and configuration"
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: valkey-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: valkey/valkey:7.2
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for Valkey master to be ready..."
+              
+              # Wait for Valkey service
+              until valkey-cli -h valkey-service -a ${VALKEY_PASSWORD} ping; do
+                echo "Valkey not ready, waiting..."
+                sleep 2
+              done
+              
+              echo "Valkey is ready. Initializing keys..."
+              
+              # Initialize TOTP tracking keys
+              valkey-cli -h valkey-service -a ${VALKEY_PASSWORD} <<EOF
+              # Create TOTP usage tracking sets for each provider
+              DEL totp:octotel:used
+              DEL totp:metrofiber:used
+              DEL totp:openserve:used
+              DEL totp:evotel:used
+              
+              # Initialize TOTP generation counters
+              SET totp:octotel:counter 0
+              SET totp:metrofiber:counter 0
+              SET totp:openserve:counter 0
+              SET totp:evotel:counter 0
+              
+              # Set configuration values
+              SET config:totp:time_window 30
+              SET config:browser:cold_start_timeout 120
+              SET config:browser:warm_pool_size 2
+              
+              # Initialize circuit breaker states
+              SET circuit_breaker:browser_service:state closed
+              SET circuit_breaker:browser_service:failures 0
+              
+              # Initialize metrics counters
+              SET metrics:jobs:total 0
+              SET metrics:jobs:success 0
+              SET metrics:jobs:failed 0
+              SET metrics:browser:provisions 0
+              SET metrics:totp:generated 0
+              
+              SAVE
+              EOF
+              
+              echo "Valkey initialization complete"
+              
+              # Verify initialization
+              valkey-cli -h valkey-service -a ${VALKEY_PASSWORD} INFO keyspace
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+
+---
+# Evidence Storage Initialization Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: evidence-storage-init
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: initialization
+  annotations:
+    description: "Initialize evidence storage directory structure"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: evidence-storage-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Initializing evidence storage structure..."
+              
+              # Create directory structure by provider
+              mkdir -p /var/evidence/metrofiber
+              mkdir -p /var/evidence/octotel
+              mkdir -p /var/evidence/openserve
+              mkdir -p /var/evidence/evotel
+              
+              # Create subdirectories for different evidence types
+              for provider in metrofiber octotel openserve evotel; do
+                mkdir -p /var/evidence/${provider}/screenshots
+                mkdir -p /var/evidence/${provider}/html_dumps
+                mkdir -p /var/evidence/${provider}/logs
+                mkdir -p /var/evidence/${provider}/errors
+              done
+              
+              # Create archive directory
+              mkdir -p /var/evidence/archive
+              
+              # Create README
+              cat > /var/evidence/README.txt <<'EOF'
+              RPA Evidence Storage
+              ====================
+              
+              Directory Structure:
+              - {provider}/screenshots/ - Browser screenshots
+              - {provider}/html_dumps/  - Page HTML captures
+              - {provider}/logs/        - Execution logs
+              - {provider}/errors/      - Error artifacts
+              - archive/                - Archived evidence
+              
+              Retention Policy:
+              - Evidence older than 30 days is automatically deleted
+              - Critical evidence should be exported before deletion
+              
+              Naming Convention:
+              - Format: {job_id}_{timestamp}_{type}.{ext}
+              - Example: 12345_20250929123045_screenshot.png
+              EOF
+              
+              # Set permissions
+              chmod -R 755 /var/evidence
+              
+              echo "Evidence storage initialization complete"
+              ls -la /var/evidence
+          volumeMounts:
+            - name: evidence-storage
+              mountPath: /var/evidence
+      volumes:
+        - name: evidence-storage
+          persistentVolumeClaim:
+            claimName: evidence-storage
+
+---
+# System Health Check Job (Run Once After Deployment)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: system-health-check
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: validation
+  annotations:
+    description: "Validate system deployment and configuration"
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 604800  # Keep for 7 days
+  template:
+    metadata:
+      labels:
+        app: system-health-check
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: rpa-orchestrator-sa
+      containers:
+        - name: health-check
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting system health check..."
+              
+              echo "=== Checking Services ==="
+              nc -zv rpa-orchestrator-service 8620 || exit 1
+              nc -zv rpa-worker-service 8621 || exit 1
+              nc -zv valkey-service 6379 || exit 1
+              nc -zv valkey-sentinel-service 26379 || exit 1
+              echo "✓ All services reachable"
+              
+              echo "=== Checking DNS Resolution ==="
+              nslookup rpa-orchestrator-service || exit 1
+              nslookup valkey-service || exit 1
+              echo "✓ DNS resolution working"
+              
+              echo "=== Checking Storage ==="
+              test -d /var/evidence || exit 1
+              test -w /var/evidence || exit 1
+              echo "✓ Evidence storage accessible"
+              
+              echo ""
+              echo "========================================="
+              echo "System Health Check: PASSED"
+              echo "========================================="
+              echo ""
+              echo "Deployment Summary:"
+              echo "- Orchestrator: Ready"
+              echo "- Workers: Ready"
+              echo "- Valkey Cluster: Ready"
+              echo "- Storage: Ready"
+              echo ""
+              echo "Next Steps:"
+              echo "1. Test browser service provisioning"
+              echo "2. Submit test job through Oracle dashboard"
+              echo "3. Verify TOTP generation"
+              echo "4. Check evidence collection"
+              echo ""
+          volumeMounts:
+            - name: evidence-storage
+              mountPath: /var/evidence
+      volumes:
+        - name: evidence-storage
+          persistentVolumeClaim:
+            claimName: evidence-storage
+
+---
+# Grafana Dashboard ConfigMap - RPA System Overview
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-rpa-overview
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    grafana_dashboard: "true"
+data:
+  rpa-overview.json: |
+    {
+      "dashboard": {
+        "title": "RPA System Overview",
+        "tags": ["rpa", "overview"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Job Execution Rate",
+            "targets": [
+              {
+                "expr": "rate(rpa_jobs_total[5m])"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Job Success Rate",
+            "targets": [
+              {
+                "expr": "rate(rpa_jobs_success[5m]) / rate(rpa_jobs_total[5m]) * 100"
+              }
+            ],
+            "type": "gauge"
+          },
+          {
+            "title": "Active Workers",
+            "targets": [
+              {
+                "expr": "sum(up{job='rpa-worker-service'})"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Active Browser Services",
+            "targets": [
+              {
+                "expr": "sum(up{job='rpa-browser-service'})"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "TOTP Generation Success Rate",
+            "targets": [
+              {
+                "expr": "rate(rpa_totp_generated_success[5m]) / rate(rpa_totp_generated_total[5m]) * 100"
+              }
+            ],
+            "type": "gauge"
+          },
+          {
+            "title": "Browser Service Cold Start Time",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(rpa_browser_cold_start_duration_seconds_bucket[5m]))"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Circuit Breaker Status",
+            "targets": [
+              {
+                "expr": "rpa_circuit_breaker_state"
+              }
+            ],
+            "type": "table"
+          },
+          {
+            "title": "Evidence Collection Rate",
+            "targets": [
+              {
+                "expr": "rate(rpa_evidence_collected_total[5m])"
+              }
+            ],
+            "type": "graph"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+---
+# Grafana Dashboard ConfigMap - Valkey Monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-valkey
+  namespace: rpa-system
+  labels:
+    app: valkey
+    grafana_dashboard: "true"
+data:
+  valkey-monitoring.json: |
+    {
+      "dashboard": {
+        "title": "Valkey Cluster Monitoring",
+        "tags": ["valkey", "cache", "ha"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Valkey Cluster Status",
+            "targets": [
+              {
+                "expr": "up{job='valkey-service'}"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Replication Status",
+            "targets": [
+              {
+                "expr": "valkey_connected_slaves"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Memory Usage",
+            "targets": [
+              {
+                "expr": "valkey_memory_used_bytes / valkey_memory_max_bytes * 100"
+              }
+            ],
+            "type": "gauge"
+          },
+          {
+            "title": "Commands Per Second",
+            "targets": [
+              {
+                "expr": "rate(valkey_commands_processed_total[1m])"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Hit Rate",
+            "targets": [
+              {
+                "expr": "rate(valkey_keyspace_hits_total[5m]) / (rate(valkey_keyspace_hits_total[5m]) + rate(valkey_keyspace_misses_total[5m])) * 100"
+              }
+            ],
+            "type": "gauge"
+          },
+          {
+            "title": "Connected Clients",
+            "targets": [
+              {
+                "expr": "valkey_connected_clients"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Evicted Keys",
+            "targets": [
+              {
+                "expr": "rate(valkey_evicted_keys_total[5m])"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Sentinel Failovers",
+            "targets": [
+              {
+                "expr": "increase(valkey_sentinel_failovers_total[1h])"
+              }
+            ],
+            "type": "stat"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+---
+# Grafana Dashboard ConfigMap - Browser Service Performance
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-browser-performance
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+    grafana_dashboard: "true"
+data:
+  browser-performance.json: |
+    {
+      "dashboard": {
+        "title": "Browser Service Performance",
+        "tags": ["browser", "performance", "automation"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Browser Service Instances",
+            "targets": [
+              {
+                "expr": "count(up{job='rpa-browser-service'} == 1)"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Cold Start Duration (p95)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(rpa_browser_cold_start_duration_seconds_bucket[5m]))"
+              }
+            ],
+            "type": "gauge",
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 10, "color": "yellow"},
+                {"value": 15, "color": "red"}
+              ]
+            }
+          },
+          {
+            "title": "Session Duration",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(rpa_browser_session_duration_seconds_bucket[5m]))"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Browser CPU Usage",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~'rpa-browser-.*'}[5m]) * 100"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Browser Memory Usage",
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{pod=~'rpa-browser-.*'} / 1024 / 1024 / 1024"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Page Load Time (p95)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(rpa_browser_page_load_duration_seconds_bucket[5m]))"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Browser Errors",
+            "targets": [
+              {
+                "expr": "rate(rpa_browser_errors_total[5m])"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Warm Pool Efficiency",
+            "targets": [
+              {
+                "expr": "rate(rpa_browser_warm_pool_hits[5m]) / (rate(rpa_browser_warm_pool_hits[5m]) + rate(rpa_browser_warm_pool_misses[5m])) * 100"
+              }
+            ],
+            "type": "gauge"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+
+---
+# Grafana Dashboard ConfigMap - Resource Utilization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-resource-utilization
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    grafana_dashboard: "true"
+data:
+  resource-utilization.json: |
+    {
+      "dashboard": {
+        "title": "RPA Resource Utilization",
+        "tags": ["resources", "capacity", "infrastructure"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "CPU Usage by Component",
+            "targets": [
+              {
+                "expr": "sum(rate(container_cpu_usage_seconds_total{namespace='rpa-system'}[5m])) by (pod)",
+                "legendFormat": "{{pod}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Memory Usage by Component",
+            "targets": [
+              {
+                "expr": "sum(container_memory_usage_bytes{namespace='rpa-system'}) by (pod) / 1024 / 1024 / 1024",
+                "legendFormat": "{{pod}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Network I/O",
+            "targets": [
+              {
+                "expr": "rate(container_network_receive_bytes_total{namespace='rpa-system'}[5m])",
+                "legendFormat": "Receive - {{pod}}"
+              },
+              {
+                "expr": "rate(container_network_transmit_bytes_total{namespace='rpa-system'}[5m])",
+                "legendFormat": "Transmit - {{pod}}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Storage Usage",
+            "targets": [
+              {
+                "expr": "kubelet_volume_stats_used_bytes{namespace='rpa-system'} / kubelet_volume_stats_capacity_bytes{namespace='rpa-system'} * 100"
+              }
+            ],
+            "type": "gauge"
+          },
+          {
+            "title": "Pod Restart Count",
+            "targets": [
+              {
+                "expr": "kube_pod_container_status_restarts_total{namespace='rpa-system'}"
+              }
+            ],
+            "type": "table"
+          },
+          {
+            "title": "HPA Status",
+            "targets": [
+              {
+                "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace='rpa-system'}",
+                "legendFormat": "Current - {{horizontalpodautoscaler}}"
+              },
+              {
+                "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace='rpa-system'}",
+                "legendFormat": "Desired - {{horizontalpodautoscaler}}"
+              }
+            ],
+            "type": "graph"
+          }
+        ],
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        }
+      }
+    }
+

@@ -1,0 +1,112 @@
+# Overlay Staging Kustomize YAML
+
+---
+# Staging Environment Overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rpa-system-staging
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+
+commonAnnotations:
+  environment: staging
+  cost-center: qa
+
+bases:
+  - ../../
+
+# Staging-specific ConfigMaps
+configMapGenerator:
+  - name: rpa-system-config
+    behavior: merge
+    literals:
+      - log-level=INFO
+      - max-workers=3
+      - browser-service-warm-pool-size=1
+      - retry-attempts=3
+
+# Moderate replicas for staging
+replicas:
+  - name: rpa-orchestrator
+    count: 2
+  - name: rpa-worker
+    count: 3
+  - name: valkey
+    count: 3
+  - name: valkey-sentinel
+    count: 3
+
+# Staging resource limits (medium)
+patches:
+  - target:
+      kind: Deployment
+      name: rpa-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+  
+  - target:
+      kind: Deployment
+      name: rpa-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 400m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 384Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 768Mi
+  
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: rpa-orchestrator-hpa
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 3
+  
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: rpa-worker-hpa
+    patch: |-
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+
+# Use release candidate tags for staging
+images:
+  - name: rpa-orchestrator
+    newTag: v2.0-rc
+  - name: rpa-worker
+    newTag: v2.0-rc
+  - name: rpa-browser
+    newTag: v2.0-rc
+
+# Enable backups but less frequent
+patchesStrategicMerge:
+  - |-
+    apiVersion: batch/v1
+    kind: CronJob
+    metadata:
+      name: valkey-backup
+    spec:
+      schedule: "0 4 * * 0"  # Weekly instead of daily

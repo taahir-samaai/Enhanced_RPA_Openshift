@@ -1,0 +1,117 @@
+# Overlay dev kustomize YAML
+
+---
+# Development Environment Overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rpa-system-dev
+
+namePrefix: dev-
+
+commonLabels:
+  environment: development
+
+commonAnnotations:
+  environment: development
+  cost-center: engineering
+
+bases:
+  - ../../
+
+# Development-specific ConfigMaps
+configMapGenerator:
+  - name: rpa-system-config
+    behavior: merge
+    literals:
+      - log-level=DEBUG
+      - max-workers=2
+      - browser-service-warm-pool-size=1
+
+# Reduced replicas for dev
+replicas:
+  - name: rpa-orchestrator
+    count: 1
+  - name: rpa-worker
+    count: 2
+  - name: valkey
+    count: 1
+  - name: valkey-sentinel
+    count: 1
+
+# Development resource limits (smaller)
+patches:
+  - target:
+      kind: Deployment
+      name: rpa-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 250m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+  
+  - target:
+      kind: Deployment
+      name: rpa-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 250m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 256Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi
+  
+  - target:
+      kind: Deployment
+      name: rpa-browser
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+  
+  # Disable HPA in dev
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      $patch: delete
+  
+  # Disable backup jobs in dev
+  - target:
+      kind: CronJob
+      name: valkey-backup
+    patch: |-
+      - op: replace
+        path: /spec/suspend
+        value: true
+
+# Use latest tag for dev
+images:
+  - name: rpa-orchestrator
+    newTag: latest
+  - name: rpa-worker
+    newTag: latest
+  - name: rpa-browser
+    newTag: latest

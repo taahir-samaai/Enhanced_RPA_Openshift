@@ -1,0 +1,273 @@
+# Valkey HA cluster with Sentinel
+
+---
+# Valkey StatefulSet for High Availability Cluster
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+  namespace: rpa-system
+  labels:
+    app: valkey
+    tier: data
+spec:
+  serviceName: valkey-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: valkey
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: valkey
+        tier: data
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - valkey
+                topologyKey: kubernetes.io/hostname
+      
+      initContainers:
+        - name: config-init
+          image: valkey/valkey:7.2
+          command:
+            - sh
+            - -c
+            - |
+              set -ex
+              # Copy default config
+              cp /config/valkey.conf /data/valkey.conf
+              
+              # Configure replication based on pod ordinal
+              if [ "${HOSTNAME##*-}" -gt 0 ]; then
+                echo "replicaof valkey-0.valkey-headless.rpa-system.svc.cluster.local 6379" >> /data/valkey.conf
+                echo "masterauth ${VALKEY_PASSWORD}" >> /data/valkey.conf
+              fi
+              
+              # Set requirepass
+              echo "requirepass ${VALKEY_PASSWORD}" >> /data/valkey.conf
+              
+              # Set permissions
+              chown 999:999 /data/valkey.conf
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+      
+      containers:
+        - name: valkey
+          image: valkey/valkey:7.2
+          command:
+            - valkey-server
+            - /data/valkey.conf
+          ports:
+            - name: valkey
+              containerPort: 6379
+              protocol: TCP
+            - name: gossip
+              containerPort: 16379
+              protocol: TCP
+          
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -a ${VALKEY_PASSWORD} ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -a ${VALKEY_PASSWORD} ping
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+      
+      volumes:
+        - name: config
+          configMap:
+            name: valkey-config
+  
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: valkey
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+        storageClassName: standard
+
+---
+# Valkey Sentinel Deployment for Automatic Failover
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: valkey-sentinel
+  namespace: rpa-system
+  labels:
+    app: valkey-sentinel
+    tier: data
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: valkey-sentinel
+  template:
+    metadata:
+      labels:
+        app: valkey-sentinel
+        tier: data
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - valkey-sentinel
+                topologyKey: kubernetes.io/hostname
+      
+      initContainers:
+        - name: sentinel-config-init
+          image: valkey/valkey:7.2
+          command:
+            - sh
+            - -c
+            - |
+              set -ex
+              cp /config/sentinel.conf /data/sentinel.conf
+              
+              # Replace password placeholder
+              sed -i "s/\${VALKEY_PASSWORD}/${VALKEY_PASSWORD}/g" /data/sentinel.conf
+              
+              chown 999:999 /data/sentinel.conf
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+      
+      containers:
+        - name: sentinel
+          image: valkey/valkey:7.2
+          command:
+            - valkey-sentinel
+            - /data/sentinel.conf
+          ports:
+            - name: sentinel
+              containerPort: 26379
+              protocol: TCP
+          
+          env:
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: valkey-credentials
+                  key: password
+          
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -p 26379 ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - valkey-cli -p 26379 sentinel get-master-addr-by-name valkey-master
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+      
+      volumes:
+        - name: config
+          configMap:
+            name: valkey-sentinel-config
+        - name: data
+          emptyDir: {}

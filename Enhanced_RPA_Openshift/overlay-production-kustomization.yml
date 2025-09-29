@@ -1,0 +1,260 @@
+# Overlay Production Kustomize YAML
+
+---
+# Production Environment Overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rpa-system
+
+namePrefix: prod-
+
+commonLabels:
+  environment: production
+  criticality: high
+
+commonAnnotations:
+  environment: production
+  cost-center: operations
+  backup: enabled
+  monitoring: enabled
+
+bases:
+  - ../../
+
+# Production-specific ConfigMaps
+configMapGenerator:
+  - name: rpa-system-config
+    behavior: merge
+    literals:
+      - log-level=INFO
+      - max-workers=4
+      - browser-service-warm-pool-size=2
+      - retry-attempts=3
+      - circuit-breaker-failure-threshold=5
+      - screenshot-retention-days=30
+  
+  - name: production-alerts
+    literals:
+      - slack-webhook-url=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+      - pagerduty-integration-key=YOUR_PAGERDUTY_KEY
+      - alert-severity-threshold=warning
+
+# Production replicas (as per architectural plan)
+replicas:
+  - name: rpa-orchestrator
+    count: 2
+  - name: rpa-worker
+    count: 4
+  - name: valkey
+    count: 3
+  - name: valkey-sentinel
+    count: 3
+
+# Production resource limits (full spec from architectural plan)
+patches:
+  - target:
+      kind: Deployment
+      name: rpa-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 2000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+  
+  - target:
+      kind: Deployment
+      name: rpa-worker
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 1500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+  
+  - target:
+      kind: Deployment
+      name: rpa-browser
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 2000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 4Gi
+  
+  # Production HPA settings
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: rpa-orchestrator-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 4
+  
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: rpa-worker-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 4
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20
+  
+  # Production PDB settings (stricter)
+  - target:
+      kind: PodDisruptionBudget
+      name: rpa-orchestrator-pdb
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 1
+  
+  - target:
+      kind: PodDisruptionBudget
+      name: rpa-worker-pdb
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 3
+  
+  - target:
+      kind: PodDisruptionBudget
+      name: valkey-pdb
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 2
+  
+  # Add pod priority classes
+  - target:
+      kind: Deployment
+      name: rpa-orchestrator
+    patch: |-
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: rpa-critical-priority
+  
+  - target:
+      kind: Deployment
+      name: rpa-worker
+    patch: |-
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: rpa-worker-priority
+  
+  - target:
+      kind: Deployment
+      name: rpa-browser
+    patch: |-
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: rpa-browser-priority
+  
+  - target:
+      kind: StatefulSet
+      name: valkey
+    patch: |-
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: rpa-critical-priority
+  
+  # Production storage sizes
+  - target:
+      kind: PersistentVolumeClaim
+      name: evidence-storage
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 100Gi
+  
+  - target:
+      kind: PersistentVolumeClaim
+      name: log-storage
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 50Gi
+  
+  - target:
+      kind: PersistentVolumeClaim
+      name: backup-storage
+    patch: |-
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 50Gi
+
+# Use stable production tags
+images:
+  - name: rpa-orchestrator
+    newTag: v2.0-enhanced
+  - name: rpa-worker
+    newTag: v2.0-enhanced
+  - name: rpa-browser
+    newTag: v2.0-enhanced
+  - name: valkey/valkey
+    newTag: "7.2"
+
+# Production-specific resource additions
+patchesStrategicMerge:
+  - |-
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: alertmanager-config
+      namespace: rpa-system
+    data:
+      alertmanager.yml: |
+        global:
+          resolve_timeout: 5m
+        route:
+          group_by: ['alertname', 'severity']
+          group_wait: 10s
+          group_interval: 10s
+          repeat_interval: 12h
+          receiver: 'default'
+          routes:
+            - match:
+                severity: critical
+              receiver: 'pagerduty'
+            - match:
+                severity: warning
+              receiver: 'slack'
+        receivers:
+          - name: 'default'
+            slack_configs:
+              - api_url: '${SLACK_WEBHOOK_URL}'
+                channel: '#rpa-alerts'
+          - name: 'slack'
+            slack_configs:
+              - api_url: '${SLACK_WEBHOOK_URL}'
+                channel: '#rpa-alerts'
+          - name: 'pagerduty'
+            pagerduty_configs:
+              - service_key: '${PAGERDUTY_INTEGRATION_KEY}'

@@ -1,0 +1,128 @@
+
+# Kustomozation YAML
+---
+# Kustomization for RPA Enhanced Deployment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rpa-system
+  namespace: rpa-system
+
+namespace: rpa-system
+
+# Common labels applied to all resources
+commonLabels:
+  project: rpa-automation
+  managed-by: kustomize
+  version: v2.0-enhanced
+
+# Common annotations
+commonAnnotations:
+  deployment-date: "2025-09-29"
+  architecture: "three-layer-enhanced"
+
+# Resources to deploy (in order)
+resources:
+  # Core Infrastructure
+  - 01-namespace.yaml
+  - 02-secrets.yaml
+  - 03-configmaps.yaml
+  - 04-persistent-volumes.yaml
+  - 05-services.yaml
+  
+  # Data Layer (Valkey)
+  - 06-valkey-statefulset.yaml
+  - 07-valkey-sentinel.yaml
+  
+  # Application Layer
+  - 08-orchestrator-deployment.yaml
+  - 09-worker-deployment.yaml
+  - 10-browser-service-deployment.yaml
+  
+  # Security & RBAC
+  - 11-rbac.yaml
+  - 12-security-context-constraints.yaml
+  - 13-network-policies.yaml
+  
+  # Scaling & Reliability
+  - 14-horizontal-pod-autoscalers.yaml
+  - 15-pod-disruption-budgets.yaml
+  
+  # Monitoring & Observability
+  - 16-service-monitors.yaml
+  
+  # Resource Management
+  - 17-resource-quotas.yaml
+  
+  # External Access
+  - 18-routes.yaml
+  
+  # Priority & Scheduling
+  - 19-priority-classes.yaml
+  
+  # Maintenance & Backup
+  - 20-backup-cronjobs.yaml
+  - 21-initialization-jobs.yaml
+  
+  # Monitoring Dashboards
+  - 22-grafana-dashboards.yaml
+
+# ConfigMap generator for dynamic configuration
+configMapGenerator:
+  - name: deployment-info
+    literals:
+      - deployment.timestamp=2025-09-29T12:00:00Z
+      - deployment.version=v2.0-enhanced
+      - deployment.environment=production
+
+# Secret generator (use for additional secrets if needed)
+secretGenerator:
+  - name: additional-secrets
+    literals: []
+
+# Images (update these with actual registry paths)
+images:
+  - name: rpa-orchestrator
+    newName: your-registry.com/rpa-orchestrator
+    newTag: v2.0-enhanced
+  - name: rpa-worker
+    newName: your-registry.com/rpa-worker
+    newTag: v2.0-enhanced
+  - name: rpa-browser
+    newName: your-registry.com/rpa-browser
+    newTag: v2.0-enhanced
+  - name: valkey/valkey
+    newName: valkey/valkey
+    newTag: "7.2"
+
+# Replica count overrides (can be customized per environment)
+replicas:
+  - name: rpa-orchestrator
+    count: 2
+  - name: rpa-worker
+    count: 4
+  - name: valkey
+    count: 3
+  - name: valkey-sentinel
+    count: 3
+
+# Patches for environment-specific customization
+patches:
+  # Example: Increase resources for production
+  - target:
+      kind: Deployment
+      name: rpa-orchestrator
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 2Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 4Gi
+
+# Strategic merge patches
+patchesStrategicMerge: []
+
+# JSON 6902 patches
+patchesJson6902: []

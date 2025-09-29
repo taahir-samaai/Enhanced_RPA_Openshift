@@ -1,0 +1,701 @@
+# Security (RBAC, SCCs, Network Policies)
+
+---
+# Service Account for Orchestrator
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rpa-orchestrator-sa
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+
+---
+# Role for Orchestrator to manage browser service lifecycle
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rpa-orchestrator-role
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+rules:
+  # Deployment management for browser services
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Pod management for browser service monitoring
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  
+  # Service discovery
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  
+  # ConfigMap and Secret access
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Event logging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # ReplicaSet viewing (for deployment status)
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for Orchestrator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rpa-orchestrator-rolebinding
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: rpa-orchestrator-sa
+    namespace: rpa-system
+roleRef:
+  kind: Role
+  name: rpa-orchestrator-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Service Account for Workers
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rpa-worker-sa
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+
+---
+# Role for Workers (minimal permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rpa-worker-role
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+rules:
+  # Service discovery for browser services
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  
+  # Pod information for self-awareness
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  
+  # ConfigMap access (read-only)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for Workers
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rpa-worker-rolebinding
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+subjects:
+  - kind: ServiceAccount
+    name: rpa-worker-sa
+    namespace: rpa-system
+roleRef:
+  kind: Role
+  name: rpa-worker-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Service Account for Browser Services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rpa-browser-sa
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+
+---
+# Role for Browser Services (minimal permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rpa-browser-role
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+rules:
+  # Pod self-awareness
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  
+  # ConfigMap access (read-only)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for Browser Services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rpa-browser-rolebinding
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+subjects:
+  - kind: ServiceAccount
+    name: rpa-browser-sa
+    namespace: rpa-system
+roleRef:
+  kind: Role
+  name: rpa-browser-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Security Context Constraint for Browser Services
+# CRITICAL: This SCC allows privileged containers for browser automation
+# Must be applied by cluster admin
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: rpa-browser-privileged-scc
+  annotations:
+    kubernetes.io/description: |
+      SCC for RPA browser automation services. Allows privileged containers
+      with necessary capabilities for Firefox/Playwright execution in OpenShift.
+      This is the core workaround for browser automation in OpenShift.
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: true
+allowedCapabilities:
+  - SYS_ADMIN
+  - NET_ADMIN
+  - CHOWN
+  - DAC_OVERRIDE
+  - FOWNER
+  - SETGID
+  - SETUID
+defaultAddCapabilities: null
+fsGroup:
+  type: RunAsAny
+groups: []
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities: []
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: RunAsAny
+seccompProfiles:
+  - '*'
+supplementalGroups:
+  type: RunAsAny
+users:
+  - system:serviceaccount:rpa-system:rpa-browser-sa
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# Standard Security Context Constraint for Orchestrator and Workers
+# These components run with least-privilege security
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: rpa-standard-scc
+  annotations:
+    kubernetes.io/description: |
+      Standard SCC for RPA orchestrator and worker components.
+      Uses least-privilege security with non-root containers.
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 1000
+groups: []
+priority: null
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - KILL
+  - MKNOD
+  - SETUID
+  - SETGID
+runAsUser:
+  type: MustRunAsRange
+  uidRangeMin: 1000
+  uidRangeMax: 1000
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - runtime/default
+supplementalGroups:
+  type: RunAsAny
+users:
+  - system:serviceaccount:rpa-system:rpa-orchestrator-sa
+  - system:serviceaccount:rpa-system:rpa-worker-sa
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# Default Deny All Ingress Traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: rpa-system
+  labels:
+    policy: security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# Orchestrator Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-network-policy
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    policy: security
+spec:
+  podSelector:
+    matchLabels:
+      app: rpa-orchestrator
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow traffic from workers
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-worker
+      ports:
+        - protocol: TCP
+          port: 8620
+    
+    # Allow traffic from monitoring (Prometheus)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-monitoring
+      ports:
+        - protocol: TCP
+          port: 9090
+    
+    # Allow health checks from OpenShift
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: 8620
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow communication with workers
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rpa-worker
+      ports:
+        - protocol: TCP
+          port: 8621
+    
+    # Allow communication with browser services
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rpa-browser
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow communication with Valkey
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow communication with Valkey Sentinel
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379
+    
+    # Allow Kubernetes API access
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: default
+      ports:
+        - protocol: TCP
+          port: 443
+    
+    # Allow database access (adjust based on your database location)
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 1521  # Oracle port, adjust if needed
+    
+    # Allow external FNO portal access (internet egress)
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+---
+# Worker Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-network-policy
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+    policy: security
+spec:
+  podSelector:
+    matchLabels:
+      app: rpa-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow health checks from orchestrator
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-orchestrator
+      ports:
+        - protocol: TCP
+          port: 8621
+    
+    # Allow traffic from monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-monitoring
+      ports:
+        - protocol: TCP
+          port: 9091
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow communication with orchestrator
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rpa-orchestrator
+      ports:
+        - protocol: TCP
+          port: 8620
+    
+    # Allow communication with browser services
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rpa-browser
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow external access for result reporting
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+---
+# Browser Service Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: browser-network-policy
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+    policy: security
+spec:
+  podSelector:
+    matchLabels:
+      app: rpa-browser
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow traffic from workers
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-worker
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow traffic from orchestrator for health checks
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-orchestrator
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    # Allow traffic from monitoring
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-monitoring
+      ports:
+        - protocol: TCP
+          port: 9092
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow external FNO portal access (internet egress for browser automation)
+    - to:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+
+---
+# Valkey Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: valkey-network-policy
+  namespace: rpa-system
+  labels:
+    app: valkey
+    policy: security
+spec:
+  podSelector:
+    matchLabels:
+      app: valkey
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow traffic from orchestrator
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-orchestrator
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow traffic from Valkey Sentinel
+    - from:
+        - podSelector:
+            matchLabels:
+              app: valkey-sentinel
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+    
+    # Allow inter-Valkey communication for replication
+    - from:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow inter-Valkey communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+    
+    # Allow communication with Sentinel
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379
+
+---
+# Valkey Sentinel Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: valkey-sentinel-network-policy
+  namespace: rpa-system
+  labels:
+    app: valkey-sentinel
+    policy: security
+spec:
+  podSelector:
+    matchLabels:
+      app: valkey-sentinel
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow traffic from orchestrator
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rpa-orchestrator
+      ports:
+        - protocol: TCP
+          port: 26379
+    
+    # Allow inter-sentinel communication
+    - from:
+        - podSelector:
+            matchLabels:
+              app: valkey-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379
+    
+    # Allow traffic from Valkey nodes
+    - from:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - protocol: TCP
+          port: 26379
+  
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: openshift-dns
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow communication with Valkey nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow inter-sentinel communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app: valkey-sentinel
+      ports:
+        - protocol: TCP
+          port: 26379

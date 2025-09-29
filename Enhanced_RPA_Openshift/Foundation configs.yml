@@ -1,0 +1,500 @@
+# Foundation (namespace, secrets, configmaps, storage, services)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rpa-system
+  labels:
+    name: rpa-system
+    purpose: rpa-automation
+  annotations:
+    description: "RPA Platform - Enhanced Deployment with Browser Services"
+
+---
+# FNO Provider Credentials - MetroFiber
+apiVersion: v1
+kind: Secret
+metadata:
+  name: metrofiber-credentials
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    provider: metrofiber
+type: Opaque
+stringData:
+  url: "https://portal.metrofiber.co.za"
+  email: "REPLACE_WITH_ACTUAL_EMAIL"
+  password: "REPLACE_WITH_ACTUAL_PASSWORD"
+
+---
+# FNO Provider Credentials - Octotel
+apiVersion: v1
+kind: Secret
+metadata:
+  name: octotel-credentials
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    provider: octotel
+type: Opaque
+stringData:
+  username: "REPLACE_WITH_ACTUAL_USERNAME"
+  password: "REPLACE_WITH_ACTUAL_PASSWORD"
+  totp-secret: "REPLACE_WITH_ACTUAL_TOTP_SECRET"
+
+---
+# FNO Provider Credentials - OpenServe
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openserve-credentials
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    provider: openserve
+type: Opaque
+stringData:
+  email: "REPLACE_WITH_ACTUAL_EMAIL"
+  password: "REPLACE_WITH_ACTUAL_PASSWORD"
+
+---
+# FNO Provider Credentials - Evotel
+apiVersion: v1
+kind: Secret
+metadata:
+  name: evotel-credentials
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    provider: evotel
+type: Opaque
+stringData:
+  username: "REPLACE_WITH_ACTUAL_USERNAME"
+  password: "REPLACE_WITH_ACTUAL_PASSWORD"
+
+---
+# Database Connection Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-credentials
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+type: Opaque
+stringData:
+  connection-string: "REPLACE_WITH_ACTUAL_DB_CONNECTION_STRING"
+  username: "REPLACE_WITH_ACTUAL_DB_USERNAME"
+  password: "REPLACE_WITH_ACTUAL_DB_PASSWORD"
+
+---
+# Service-to-Service Authentication JWT Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-signing-key
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: authentication
+type: Opaque
+stringData:
+  signing-key: "REPLACE_WITH_GENERATED_JWT_SECRET"
+  # Generate with: openssl rand -base64 32
+
+---
+# Valkey Authentication Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: valkey-credentials
+  namespace: rpa-system
+  labels:
+    app: valkey
+type: Opaque
+stringData:
+  password: "REPLACE_WITH_VALKEY_PASSWORD"
+  # Generate with: openssl rand -base64 24
+
+---
+# RPA System Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rpa-system-config
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+data:
+  # Orchestrator Configuration
+  orchestrator-host: "rpa-orchestrator-service"
+  orchestrator-port: "8620"
+  orchestrator-timeout: "120"
+  
+  # Worker Configuration
+  max-workers: "4"
+  worker-timeout: "600"
+  worker-health-check-interval: "30"
+  
+  # Browser Service Configuration
+  browser-service-cold-start-timeout: "120"
+  browser-service-warm-pool-size: "2"
+  browser-service-max-idle-time: "300"
+  browser-session-timeout: "600"
+  
+  # Logging Configuration
+  log-level: "INFO"
+  log-format: "json"
+  log-file-path: "/var/log/rpa"
+  
+  # Retry Configuration
+  retry-attempts: "3"
+  retry-delay: "60"
+  retry-backoff-multiplier: "2"
+  
+  # Evidence Management
+  screenshot-retention-days: "30"
+  evidence-storage-path: "/var/evidence"
+  
+  # TOTP Configuration
+  totp-time-window: "30"
+  totp-code-validity-seconds: "30"
+  totp-buffer-seconds: "5"
+  
+  # Circuit Breaker Configuration
+  circuit-breaker-failure-threshold: "5"
+  circuit-breaker-timeout: "60"
+  circuit-breaker-half-open-requests: "3"
+  
+  # Performance Configuration
+  job-batch-size: "10"
+  concurrent-jobs-per-worker: "2"
+
+---
+# Valkey Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valkey-config
+  namespace: rpa-system
+  labels:
+    app: valkey
+data:
+  valkey.conf: |
+    # Network Configuration
+    bind 0.0.0.0
+    port 6379
+    protected-mode yes
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+    
+    # General Configuration
+    daemonize no
+    supervised no
+    pidfile /var/run/valkey.pid
+    loglevel notice
+    logfile ""
+    databases 16
+    
+    # Persistence Configuration
+    save 900 1
+    save 300 10
+    save 60 10000
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+    dbfilename dump.rdb
+    dir /data
+    
+    # Replication Configuration
+    replica-serve-stale-data yes
+    replica-read-only yes
+    repl-diskless-sync no
+    repl-diskless-sync-delay 5
+    repl-disable-tcp-nodelay no
+    replica-priority 100
+    
+    # Memory Management
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    
+    # Append Only File
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+    no-appendfsync-on-rewrite no
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    
+    # Lua Scripting
+    lua-time-limit 5000
+    
+    # Slow Log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+    
+    # Event Notification
+    notify-keyspace-events ""
+    
+    # Advanced Configuration
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    list-max-ziplist-size -2
+    set-max-intset-entries 512
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    activerehashing yes
+    client-output-buffer-limit normal 0 0 0
+    client-output-buffer-limit replica 256mb 64mb 60
+    client-output-buffer-limit pubsub 32mb 8mb 60
+    hz 10
+    aof-rewrite-incremental-fsync yes
+
+---
+# Valkey Sentinel Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: valkey-sentinel-config
+  namespace: rpa-system
+  labels:
+    app: valkey-sentinel
+data:
+  sentinel.conf: |
+    port 26379
+    dir /data
+    sentinel monitor valkey-master valkey-0.valkey-service.rpa-system.svc.cluster.local 6379 2
+    sentinel auth-pass valkey-master ${VALKEY_PASSWORD}
+    sentinel down-after-milliseconds valkey-master 5000
+    sentinel parallel-syncs valkey-master 1
+    sentinel failover-timeout valkey-master 10000
+    sentinel deny-scripts-reconfig yes
+
+---
+# Valkey Data PVC - Node 0
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: valkey-data-0
+  namespace: rpa-system
+  labels:
+    app: valkey
+    node: valkey-0
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Valkey Data PVC - Node 1
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: valkey-data-1
+  namespace: rpa-system
+  labels:
+    app: valkey
+    node: valkey-1
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Valkey Data PVC - Node 2
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: valkey-data-2
+  namespace: rpa-system
+  labels:
+    app: valkey
+    node: valkey-2
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# Evidence Storage PVC (Shared across orchestrator and workers)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evidence-storage
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: evidence-collection
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+# Log Storage PVC (Shared)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: log-storage
+  namespace: rpa-system
+  labels:
+    app: rpa-system
+    purpose: logging
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+
+---
+# Orchestrator Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpa-orchestrator-service
+  namespace: rpa-system
+  labels:
+    app: rpa-orchestrator
+    tier: control-plane
+spec:
+  type: ClusterIP
+  selector:
+    app: rpa-orchestrator
+  ports:
+    - name: api
+      protocol: TCP
+      port: 8620
+      targetPort: 8620
+    - name: metrics
+      protocol: TCP
+      port: 9090
+      targetPort: 9090
+  sessionAffinity: None
+
+---
+# Worker Service (for health checks and metrics)
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpa-worker-service
+  namespace: rpa-system
+  labels:
+    app: rpa-worker
+    tier: execution
+spec:
+  type: ClusterIP
+  selector:
+    app: rpa-worker
+  ports:
+    - name: health
+      protocol: TCP
+      port: 8621
+      targetPort: 8621
+    - name: metrics
+      protocol: TCP
+      port: 9091
+      targetPort: 9091
+  sessionAffinity: None
+
+---
+# Browser Service (Headless for dynamic pod discovery)
+apiVersion: v1
+kind: Service
+metadata:
+  name: rpa-browser-service
+  namespace: rpa-system
+  labels:
+    app: rpa-browser
+    tier: automation
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for direct pod access
+  selector:
+    app: rpa-browser
+  ports:
+    - name: automation-api
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
+    - name: metrics
+      protocol: TCP
+      port: 9092
+      targetPort: 9092
+
+---
+# Valkey Master/Replica Service (for client connections)
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-service
+  namespace: rpa-system
+  labels:
+    app: valkey
+    role: master
+spec:
+  type: ClusterIP
+  selector:
+    app: valkey
+  ports:
+    - name: valkey
+      protocol: TCP
+      port: 6379
+      targetPort: 6379
+
+---
+# Valkey Headless Service (for StatefulSet pod DNS)
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-headless
+  namespace: rpa-system
+  labels:
+    app: valkey
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: valkey
+  ports:
+    - name: valkey
+      protocol: TCP
+      port: 6379
+      targetPort: 6379
+    - name: gossip
+      protocol: TCP
+      port: 16379
+      targetPort: 16379
+
+---
+# Valkey Sentinel Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-sentinel-service
+  namespace: rpa-system
+  labels:
+    app: valkey-sentinel
+spec:
+  type: ClusterIP
+  selector:
+    app: valkey-sentinel
+  ports:
+    - name: sentinel
+      protocol: TCP
+      port: 26379
+      targetPort: 26379

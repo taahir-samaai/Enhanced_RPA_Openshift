@@ -1,0 +1,132 @@
+# RPA Orchestrator - Environment Configuration Template
+# Copy this file to .env and fill in your values for local development
+
+# =============================================================================
+# DATABASE CONFIGURATION
+# =============================================================================
+DATABASE_URL=sqlite:////var/data/rpa_orchestrator.db
+# For PostgreSQL: postgresql://user:password@host:5432/rpa_db
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_TIMEOUT=30
+DB_POOL_RECYCLE=3600
+
+# =============================================================================
+# ORCHESTRATOR CONFIGURATION
+# =============================================================================
+ORCHESTRATOR_HOST=0.0.0.0
+ORCHESTRATOR_PORT=8620
+ORCHESTRATOR_URL=http://localhost:8620
+MAX_WORKERS=10
+POLL_INTERVAL=5
+WORKER_TIMEOUT=30
+
+# =============================================================================
+# AUTHENTICATION & SECURITY
+# =============================================================================
+# Generate with: openssl rand -base64 32
+JWT_SECRET_KEY=change-me-in-production-generate-with-openssl
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_MINUTES=60
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me-in-production
+
+# =============================================================================
+# VALKEY (REDIS-COMPATIBLE) CONFIGURATION
+# =============================================================================
+VALKEY_HOST=localhost
+VALKEY_PORT=6379
+VALKEY_PASSWORD=change-me-in-production
+VALKEY_DB=0
+VALKEY_SOCKET_TIMEOUT=5
+
+# =============================================================================
+# BROWSER SERVICE CONFIGURATION
+# =============================================================================
+BROWSER_SERVICE_IMAGE=rpa-browser:v2.0-enhanced
+NAMESPACE=rpa-system
+BROWSER_CPU_REQUEST=500m
+BROWSER_CPU_LIMIT=2
+BROWSER_MEMORY_REQUEST=1Gi
+BROWSER_MEMORY_LIMIT=4Gi
+BROWSER_IDLE_TIMEOUT=10
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+LOG_LEVEL=INFO
+# Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_PATH=/var/logs/orchestrator.log
+LOG_FORMAT=%(asctime)s [%(levelname)s] %(name)s: %(message)s
+
+# =============================================================================
+# FNO PROVIDER CREDENTIALS - METROFIBER
+# =============================================================================
+METROFIBER_URL=https://portal.metrofiber.co.za
+METROFIBER_EMAIL=your-bot-email@example.com
+METROFIBER_PASSWORD=change-me
+
+# =============================================================================
+# FNO PROVIDER CREDENTIALS - OCTOTEL
+# =============================================================================
+OCTOTEL_URL=https://fno.octotel.co.za
+OCTOTEL_USERNAME=your-bot-username
+OCTOTEL_PASSWORD=change-me
+# Generate TOTP secret in the Octotel portal and paste base32 secret here
+OCTOTEL_TOTP_SECRET=JBSWY3DPEHPK3PXP
+
+# =============================================================================
+# FNO PROVIDER CREDENTIALS - OPENSERVE
+# =============================================================================
+OPENSERVE_URL=https://partnerportal.openserve.co.za
+OPENSERVE_EMAIL=your-bot-email@example.com
+OPENSERVE_PASSWORD=change-me
+
+# =============================================================================
+# FNO PROVIDER CREDENTIALS - EVOTEL
+# =============================================================================
+EVOTEL_URL=https://my.evotel.co.za/Account/Login
+EVOTEL_EMAIL=your-bot-email@example.com
+EVOTEL_PASSWORD=change-me
+
+# =============================================================================
+# EXTERNAL CALLBACK CONFIGURATION
+# =============================================================================
+# ORDS endpoint for sending job completion reports
+CALLBACK_ENDPOINT=https://your-oracle-ords.com/ords/api/rpa/job-callback
+CALLBACK_AUTH_TOKEN=your-callback-auth-token
+CALLBACK_TIMEOUT=10
+CALLBACK_INTERVAL=300
+
+# =============================================================================
+# HEALTH REPORTING
+# =============================================================================
+HEALTH_REPORT_ENABLED=true
+HEALTH_REPORT_ENDPOINT=https://your-oracle-ords.com/ords/api/health/report
+HEALTH_REPORT_INTERVAL=300
+
+# =============================================================================
+# CORS CONFIGURATION
+# =============================================================================
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
+CORS_ALLOW_CREDENTIALS=true
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_PER_MINUTE=60
+
+# =============================================================================
+# KUBERNETES/OPENSHIFT (for browser service management)
+# =============================================================================
+# Leave empty for local development, will be auto-configured in OpenShift
+KUBERNETES_SERVICE_HOST=
+KUBERNETES_SERVICE_PORT=
+
+# =============================================================================
+# DEVELOPMENT/DEBUG OPTIONS
+# =============================================================================
+DEBUG_MODE=false
+RELOAD_ON_CHANGE=false
+PYTHONUNBUFFERED=1

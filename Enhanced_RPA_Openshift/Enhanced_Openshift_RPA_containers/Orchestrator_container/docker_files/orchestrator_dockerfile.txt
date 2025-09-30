@@ -1,0 +1,56 @@
+# Enhanced RPA Orchestrator Container
+# Three-layer architecture with browser service management
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash rpa && \
+    mkdir -p /var/logs /var/evidence /var/data && \
+    chown -R rpa:rpa /app /var/logs /var/evidence /var/data
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY orchestrator.py .
+COPY models.py .
+COPY db.py .
+COPY auth.py .
+COPY rate_limiter.py .
+COPY health_reporter.py .
+COPY monitor.py .
+COPY errors.py .
+
+# Copy service modules
+COPY services/ services/
+
+# Switch to non-root user
+USER rpa
+
+# Expose ports
+EXPOSE 8620
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8620/health || exit 1
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LOG_PATH=/var/logs/orchestrator.log
+
+# Run the orchestrator
+CMD ["python", "orchestrator.py"]

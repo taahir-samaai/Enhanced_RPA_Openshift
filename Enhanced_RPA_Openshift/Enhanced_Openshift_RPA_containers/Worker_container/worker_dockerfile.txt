@@ -1,0 +1,54 @@
+# Worker Container - Three-Layer Architecture
+# Runs business logic and communicates with browser service
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (for layer caching)
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY worker.py .
+COPY browser_client.py .
+COPY provider_factory.py .
+COPY config.py .
+COPY providers/ ./providers/
+
+# Create non-root user
+RUN useradd -m -u 1000 rpaworker && \
+    chown -R rpaworker:rpaworker /app
+
+# Create directories for logs and evidence
+RUN mkdir -p /var/log/rpa /var/evidence && \
+    chown -R rpaworker:rpaworker /var/log/rpa /var/evidence
+
+# Switch to non-root user
+USER rpaworker
+
+# Expose worker port
+EXPOSE 8621
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8621/health')"
+
+# Environment variables (can be overridden)
+ENV PYTHONUNBUFFERED=1
+ENV WORKER_PORT=8621
+ENV WORKER_HOST=0.0.0.0
+ENV LOG_LEVEL=INFO
+ENV BROWSER_SERVICE_URL=http://rpa-browser-service:8080
+
+# Run worker
+CMD ["python", "-m", "uvicorn", "worker:app", "--host", "0.0.0.0", "--port", "8621", "--log-level", "info"]

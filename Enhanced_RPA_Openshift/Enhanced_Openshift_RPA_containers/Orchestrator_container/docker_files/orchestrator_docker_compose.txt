@@ -1,0 +1,185 @@
+version: '3.8'
+
+# RPA Orchestrator - Local Development Environment
+# This docker-compose file sets up a complete local testing environment
+
+services:
+  # Valkey (Redis-compatible) for TOTP tracking
+  valkey:
+    image: valkey/valkey:7.2
+    container_name: rpa-valkey
+    ports:
+      - "6379:6379"
+    command: >
+      valkey-server
+      --requirepass dev_password_change_me
+      --appendonly yes
+      --appendfsync everysec
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "dev_password_change_me", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - rpa-network
+
+  # PostgreSQL Database (optional, can use SQLite instead)
+  postgres:
+    image: postgres:15-alpine
+    container_name: rpa-postgres
+    environment:
+      POSTGRES_DB: rpa_db
+      POSTGRES_USER: rpa_user
+      POSTGRES_PASSWORD: dev_password_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpa_user"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - rpa-network
+
+  # RPA Orchestrator
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rpa-orchestrator
+    ports:
+      - "8620:8620"
+    environment:
+      # Database - choose SQLite or PostgreSQL
+      DATABASE_URL: "sqlite:////var/data/rpa_orchestrator.db"
+      # DATABASE_URL: "postgresql://rpa_user:dev_password_change_me@postgres:5432/rpa_db"
+      
+      # Authentication
+      JWT_SECRET_KEY: "dev-secret-key-change-in-production"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "admin123"
+      
+      # Valkey
+      VALKEY_HOST: "valkey"
+      VALKEY_PORT: "6379"
+      VALKEY_PASSWORD: "dev_password_change_me"
+      
+      # Orchestrator config
+      ORCHESTRATOR_HOST: "0.0.0.0"
+      ORCHESTRATOR_PORT: "8620"
+      ORCHESTRATOR_URL: "http://orchestrator:8620"
+      MAX_WORKERS: "5"
+      POLL_INTERVAL: "5"
+      
+      # Logging
+      LOG_LEVEL: "DEBUG"
+      LOG_PATH: "/var/logs/orchestrator.log"
+      
+      # Browser service config (won't work locally without k8s)
+      NAMESPACE: "rpa-system"
+      BROWSER_SERVICE_IMAGE: "rpa-browser:v2.0-enhanced"
+      
+      # FNO Credentials (add your real ones for testing)
+      METROFIBER_URL: "https://portal.metrofiber.co.za"
+      METROFIBER_EMAIL: "test@example.com"
+      METROFIBER_PASSWORD: "change-me"
+      
+      OCTOTEL_URL: "https://fno.octotel.co.za"
+      OCTOTEL_USERNAME: "test@example.com"
+      OCTOTEL_PASSWORD: "change-me"
+      OCTOTEL_TOTP_SECRET: "JBSWY3DPEHPK3PXP"
+      
+      # Callback
+      CALLBACK_ENDPOINT: ""
+      HEALTH_REPORT_ENABLED: "false"
+      
+      # Development
+      DEBUG_MODE: "true"
+      PYTHONUNBUFFERED: "1"
+    
+    volumes:
+      - ./data:/var/data
+      - ./logs:/var/logs
+      - ./evidence:/var/evidence
+      # Mount code for development (comment out for production testing)
+      # - ./orchestrator.py:/app/orchestrator.py
+      # - ./services:/app/services
+    
+    depends_on:
+      valkey:
+        condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8620/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - rpa-network
+
+  # Mock Worker (for testing without full worker deployment)
+  mock-worker:
+    image: python:3.11-slim
+    container_name: rpa-mock-worker
+    command: >
+      bash -c "
+      pip install fastapi uvicorn requests &&
+      cat > /tmp/mock_worker.py << 'EOF'
+      from fastapi import FastAPI
+      import uvicorn
+      
+      app = FastAPI()
+      
+      @app.get('/status')
+      def status():
+          return {'available': True, 'jobs': 0}
+      
+      @app.post('/execute')
+      def execute(payload: dict):
+          print(f'Received job: {payload}')
+          return {'status': 'accepted', 'message': 'Job queued'}
+      
+      @app.get('/health')
+      def health():
+          return {'status': 'healthy'}
+      
+      if __name__ == '__main__':
+          uvicorn.run(app, host='0.0.0.0', port=8621)
+      EOF
+      python /tmp/mock_worker.py
+      "
+    ports:
+      - "8621:8621"
+    networks:
+      - rpa-network
+
+  # Valkey Commander (Web UI for Valkey/Redis)
+  valkey-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: rpa-valkey-ui
+    environment:
+      REDIS_HOSTS: "local:valkey:6379:0:dev_password_change_me"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - valkey
+    networks:
+      - rpa-network
+
+volumes:
+  valkey_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  rpa-network:
+    driver: bridge

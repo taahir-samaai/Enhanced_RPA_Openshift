@@ -1,0 +1,125 @@
+# Browser Service Makefile
+# =========================
+
+.PHONY: help install dev build test clean deploy
+
+# Variables
+IMAGE_NAME = browser-service
+IMAGE_TAG = latest
+REGISTRY = your-registry.com
+NAMESPACE = rpa-system
+
+help:
+	@echo "Browser Service - Available Commands"
+	@echo "====================================="
+	@echo "  install     - Install dependencies"
+	@echo "  install-pw  - Install Playwright browsers"
+	@echo "  dev         - Run development server"
+	@echo "  build       - Build Docker image"
+	@echo "  test        - Run API tests"
+	@echo "  lint        - Run code linting"
+	@echo "  clean       - Clean temporary files"
+	@echo "  deploy      - Deploy to OpenShift"
+	@echo "  logs        - View OpenShift logs"
+	@echo ""
+
+install:
+	@echo "Installing Python dependencies..."
+	pip install -r requirements.txt
+	@echo "✓ Dependencies installed"
+
+install-pw:
+	@echo "Installing Playwright browsers..."
+	playwright install firefox
+	playwright install-deps firefox
+	@echo "✓ Playwright browsers installed"
+
+dev:
+	@echo "Starting development server..."
+	@echo "Access API docs at: http://localhost:8080/docs"
+	uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+
+build:
+	@echo "Building Docker image..."
+	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	@echo "✓ Image built: $(IMAGE_NAME):$(IMAGE_TAG)"
+
+build-openshift:
+	@echo "Building image in OpenShift..."
+	oc new-build --name=$(IMAGE_NAME) --binary --strategy=docker || true
+	oc start-build $(IMAGE_NAME) --from-dir=. --follow
+	@echo "✓ OpenShift build complete"
+
+test:
+	@echo "Running API tests..."
+	@if [ -z "$$JWT_TOKEN" ]; then \
+		echo "Error: JWT_TOKEN not set"; \
+		echo "Usage: JWT_TOKEN=your-token make test"; \
+		exit 1; \
+	fi
+	chmod +x test_api.sh
+	./test_api.sh
+	@echo "✓ Tests complete"
+
+test-local:
+	@echo "Running local tests without JWT..."
+	curl -s http://localhost:8080/health/live | python -m json.tool
+	@echo "✓ Local health check passed"
+
+lint:
+	@echo "Running code linting..."
+	@which flake8 > /dev/null || pip install flake8
+	flake8 --max-line-length=100 --exclude=venv,__pycache__ .
+	@echo "✓ Linting complete"
+
+format:
+	@echo "Formatting code with black..."
+	@which black > /dev/null || pip install black
+	black --line-length=100 .
+	@echo "✓ Code formatted"
+
+clean:
+	@echo "Cleaning temporary files..."
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete
+	find . -type f -name "*.pyo" -delete
+	find . -type f -name "*.log" -delete
+	find . -type f -name ".DS_Store" -delete
+	rm -f test_screenshot.png
+	@echo "✓ Cleanup complete"
+
+deploy:
+	@echo "Deploying to OpenShift namespace: $(NAMESPACE)"
+	@oc project $(NAMESPACE) || oc new-project $(NAMESPACE)
+	@echo "Creating deployment..."
+	@oc apply -f ../Enhanced_RPA_Openshift/10-browser-service-deployment.yaml
+	@echo "✓ Deployment complete"
+
+logs:
+	@echo "Fetching logs from OpenShift..."
+	oc logs -f deployment/browser-service -n $(NAMESPACE)
+
+status:
+	@echo "Checking OpenShift deployment status..."
+	oc get pods -n $(NAMESPACE) -l app=browser-service
+	oc get svc -n $(NAMESPACE) -l app=browser-service
+
+shell:
+	@echo "Opening shell in browser-service pod..."
+	@POD=$$(oc get pods -n $(NAMESPACE) -l app=browser-service -o jsonpath='{.items[0].metadata.name}'); \
+	oc exec -it $$POD -n $(NAMESPACE) -- /bin/bash
+
+delete:
+	@echo "Deleting browser-service deployment..."
+	oc delete deployment browser-service -n $(NAMESPACE) || true
+	oc delete svc browser-service -n $(NAMESPACE) || true
+	@echo "✓ Deployment deleted"
+
+push:
+	@echo "Tagging and pushing image to registry..."
+	docker tag $(IMAGE_NAME):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+	docker push $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+	@echo "✓ Image pushed to $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)"
+
+all: clean install install-pw lint build
+	@echo "✓ All tasks complete"
